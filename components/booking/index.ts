@@ -4,6 +4,7 @@ export { VehicleDetailsStep } from "./vehicle-details-step";
 export { ServiceDetailsStep } from "./service-details-step";
 export { ScheduleStep } from "./schedule-step";
 export type {
+  Attachment,
   BookingFormData,
   FormErrors,
   TakenBooking,

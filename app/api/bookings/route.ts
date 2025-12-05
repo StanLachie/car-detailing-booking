@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
       serviceType,
       scent,
       specialRequests,
+      attachments,
       date,
       timeOfDay,
     } = body;
@@ -147,6 +148,7 @@ export async function POST(request: NextRequest) {
         serviceType,
         scent,
         specialRequests: specialRequests || null,
+        attachments: attachments?.length > 0 ? JSON.stringify(attachments) : null,
         date,
         timeOfDay,
         status: "pending",

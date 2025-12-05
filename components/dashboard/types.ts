@@ -1,3 +1,9 @@
+export interface Attachment {
+  url: string;
+  type: "image" | "video";
+  name: string;
+}
+
 export interface Booking {
   id: string;
   name: string;
@@ -10,6 +16,7 @@ export interface Booking {
   serviceType: string;
   scent: string;
   specialRequests: string | null;
+  attachments: Attachment[] | null;
   date: string;
   timeOfDay: string;
   status: string;

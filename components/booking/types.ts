@@ -1,3 +1,9 @@
+export interface Attachment {
+  url: string;
+  type: "image" | "video";
+  name: string;
+}
+
 export interface BookingFormData {
   name: string;
   mobile: string;
@@ -8,7 +14,7 @@ export interface BookingFormData {
   vehicleModel: string;
   serviceType: "both" | "interior" | "exterior" | "";
   scent: string;
-  photos: FileList | null;
+  attachments: Attachment[];
   specialRequests: string;
   date: Date | undefined;
   timeOfDay: "morning" | "afternoon" | "";

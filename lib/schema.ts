@@ -146,6 +146,7 @@ export const booking = sqliteTable(
     serviceType: text("service_type").notNull(), // "both", "interior", "exterior"
     scent: text("scent").notNull(), // "none", "no-preference", or scent name
     specialRequests: text("special_requests"),
+    attachments: text("attachments"), // JSON array of {url, type, name}
     date: text("date").notNull(), // ISO date string YYYY-MM-DD
     timeOfDay: text("time_of_day").notNull(), // "morning" or "afternoon"
     status: text("status").default("pending").notNull(), // pending, confirmed, completed, cancelled

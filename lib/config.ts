@@ -80,6 +80,15 @@ export const MIN_BOOKING_HOURS_AHEAD = 24;
 export const MAX_BOOKING_DAYS_AHEAD = 30;
 
 // ============================================
+// File Uploads
+// ============================================
+export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+export const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
+export const MAX_FILE_SIZE_MB = 50;
+export const MAX_VIDEO_DURATION_SECONDS = 30;
+export const MAX_ATTACHMENTS = 3;
+
+// ============================================
 // SMS Notifications
 // ============================================
 export interface BookingNotificationData {

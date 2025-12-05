@@ -72,7 +72,7 @@ const initialFormData: BookingFormData = {
   vehicleModel: "",
   serviceType: "both",
   scent: "none",
-  photos: null,
+  attachments: [],
   specialRequests: "",
   date: undefined,
   timeOfDay: "",
@@ -108,6 +108,7 @@ async function createBooking(data: {
   serviceType: string;
   scent: string;
   specialRequests: string | null;
+  attachments: { url: string; type: string; name: string }[];
   date: string;
   timeOfDay: string;
 }) {
@@ -272,6 +273,7 @@ export default function Home() {
       serviceType: formData.serviceType,
       scent: formData.scent,
       specialRequests: formData.specialRequests || null,
+      attachments: formData.attachments,
       date: formatDateBrisbane(formData.date!),
       timeOfDay: formData.timeOfDay,
     });

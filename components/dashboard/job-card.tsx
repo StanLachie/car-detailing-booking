@@ -11,6 +11,8 @@ import {
   Car,
   Sparkles,
   Star,
+  Paperclip,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { generateReviewMessage, JOB_STATUSES, type JobStatus } from "@/lib/config";
@@ -93,6 +95,44 @@ export function JobCard({
         <p className="text-sm bg-muted p-2 rounded">
           <span className="font-medium">Notes:</span> {job.specialRequests}
         </p>
+      )}
+
+      {job.attachments && job.attachments.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+            <Paperclip className="w-4 h-4" />
+            <span>{job.attachments.length} attachment{job.attachments.length > 1 ? "s" : ""}</span>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {job.attachments.map((attachment, index) => (
+              <a
+                key={index}
+                href={attachment.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="relative aspect-square rounded-lg overflow-hidden bg-muted hover:opacity-80 transition-opacity"
+              >
+                {attachment.type === "image" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={attachment.url}
+                    alt={attachment.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Video className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                )}
+                {attachment.type === "video" && (
+                  <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 bg-black/60 text-white text-xs rounded">
+                    Video
+                  </div>
+                )}
+              </a>
+            ))}
+          </div>
+        </div>
       )}
 
       <div className="flex flex-wrap gap-2 pt-2">

@@ -31,6 +31,12 @@ export async function GET() {
       return descending ? bTime - aTime : aTime - bTime;
     };
 
+    // Parse attachments JSON helper
+    const parseAttachments = (b: typeof booking.$inferSelect) => ({
+      ...b,
+      attachments: b.attachments ? JSON.parse(b.attachments) : null,
+    });
+
     // Get upcoming bookings (today/future AND not completed/cancelled)
     const upcomingRaw = await db
       .select()
@@ -41,7 +47,9 @@ export async function GET() {
           notInArray(booking.status, ["completed", "cancelled"])
         )
       );
-    const upcoming = upcomingRaw.sort((a, b) => sortByDateTime(a, b));
+    const upcoming = upcomingRaw
+      .sort((a, b) => sortByDateTime(a, b))
+      .map(parseAttachments);
 
     // Get past bookings (past date OR completed/cancelled)
     const pastRaw = await db
@@ -53,7 +61,9 @@ export async function GET() {
           inArray(booking.status, ["completed", "cancelled"])
         )
       );
-    const past = pastRaw.sort((a, b) => sortByDateTime(a, b, true));
+    const past = pastRaw
+      .sort((a, b) => sortByDateTime(a, b, true))
+      .map(parseAttachments);
 
     return NextResponse.json({ upcoming, past });
   } catch (error) {

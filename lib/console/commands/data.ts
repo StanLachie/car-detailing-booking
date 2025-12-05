@@ -10,7 +10,7 @@ export const getData: DevCommand = {
     console.table({
       ...data,
       date: data.date?.toLocaleDateString() ?? "Not set",
-      photos: data.photos ? `${data.photos.length} file(s)` : "None",
+      attachments: data.attachments.length > 0 ? `${data.attachments.length} file(s)` : "None",
     });
     return data;
   },
