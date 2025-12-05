@@ -292,7 +292,7 @@ export default function Home() {
       <main className="min-h-screen bg-background py-8 px-4">
         <div className="max-w-lg mx-auto">
           <Card>
-            <CardContent className="text-center py-8">
+            <CardContent className="text-center">
               <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Booking Received!</h2>
               <p className="text-muted-foreground mb-6">
