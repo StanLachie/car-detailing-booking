@@ -2,22 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { booking, unavailableSlot } from "@/lib/schema";
 import { eq, and, or } from "drizzle-orm";
+import { sendSMS } from "@/lib/sms";
+import { generateBookingNotificationMessage, MAX_BOOKING_DAYS_AHEAD } from "@/lib/config";
 
 const BRISBANE_TZ = "Australia/Brisbane";
-const SLOT_START_HOURS = { morning: 8, afternoon: 13 };
+const SLOT_START_HOURS = { morning: 9, afternoon: 13 };
 
 function generateId() {
   return crypto.randomUUID();
 }
 
 function isWithin24Hours(dateStr: string, timeOfDay: string): boolean {
-  const now = new Date(new Date().toLocaleString("en-US", { timeZone: BRISBANE_TZ }));
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: BRISBANE_TZ })
+  );
   const slotDate = new Date(dateStr + "T00:00:00");
-  const startHour = SLOT_START_HOURS[timeOfDay as keyof typeof SLOT_START_HOURS] ?? 8;
+  const startHour =
+    SLOT_START_HOURS[timeOfDay as keyof typeof SLOT_START_HOURS] ?? 8;
   slotDate.setHours(startHour, 0, 0, 0);
 
-  const hoursUntilSlot = (slotDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+  const hoursUntilSlot =
+    (slotDate.getTime() - now.getTime()) / (1000 * 60 * 60);
   return hoursUntilSlot < 24;
+}
+
+function isBeyondMaxDays(dateStr: string): boolean {
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: BRISBANE_TZ })
+  );
+  const bookingDate = new Date(dateStr + "T00:00:00");
+  const maxDate = new Date(now);
+  maxDate.setDate(maxDate.getDate() + MAX_BOOKING_DAYS_AHEAD);
+  return bookingDate > maxDate;
 }
 
 export async function POST(request: NextRequest) {
@@ -40,7 +56,18 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Validate required fields
-    if (!name || !mobile || !address || !vehicleYear || !vehicleMake || !vehicleModel || !serviceType || !scent || !date || !timeOfDay) {
+    if (
+      !name ||
+      !mobile ||
+      !address ||
+      !vehicleYear ||
+      !vehicleMake ||
+      !vehicleModel ||
+      !serviceType ||
+      !scent ||
+      !date ||
+      !timeOfDay
+    ) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
@@ -51,6 +78,14 @@ export async function POST(request: NextRequest) {
     if (isWithin24Hours(date, timeOfDay)) {
       return NextResponse.json(
         { error: "Bookings require at least 24 hours notice" },
+        { status: 400 }
+      );
+    }
+
+    // Check max days ahead
+    if (isBeyondMaxDays(date)) {
+      return NextResponse.json(
+        { error: `Bookings cannot be made more than ${MAX_BOOKING_DAYS_AHEAD} days in advance` },
         { status: 400 }
       );
     }
@@ -117,6 +152,25 @@ export async function POST(request: NextRequest) {
         status: "pending",
       })
       .returning();
+
+    // Send SMS notification (don't await to avoid blocking response)
+    const smsMessage = generateBookingNotificationMessage({
+      name,
+      date,
+      timeOfDay,
+      vehicleYear,
+      vehicleMake,
+      vehicleModel,
+      serviceType,
+      address,
+      mobile: mobile.replace(/\s/g, ""),
+      scent,
+      specialRequests: specialRequests || null,
+      returningCustomer: returningCustomer ?? false,
+    });
+    sendSMS(smsMessage).catch((err) =>
+      console.error("SMS notification failed:", err)
+    );
 
     return NextResponse.json({ booking: newBooking[0] }, { status: 201 });
   } catch (error) {

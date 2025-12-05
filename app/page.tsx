@@ -1,6 +1,17 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import Image from "next/image";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useSession } from "@/lib/auth-client";
+import { registerDevConsole } from "@/lib/console";
+import {
+  TOTAL_STEPS,
+  MOBILE_REGEX,
+  MIN_NAME_LENGTH,
+  BUSINESS_NAME,
+} from "@/lib/config";
+import logo from "./logo.png";
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,6 +19,7 @@ import {
   MessageSquare,
   CheckCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { formatDateBrisbane } from "@/lib/date";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +27,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Table,
@@ -35,11 +46,6 @@ import {
   type TakenBooking,
 } from "@/components/booking";
 
-const TOTAL_STEPS = 4;
-
-// Australian mobile phone regex (04XX XXX XXX or +614XX XXX XXX)
-const MOBILE_REGEX = /^(\+?61|0)4\d{8}$/;
-
 function validateMobile(mobile: string): string | undefined {
   const cleaned = mobile.replace(/\s/g, "");
   if (!cleaned) return "Mobile number is required";
@@ -51,7 +57,8 @@ function validateMobile(mobile: string): string | undefined {
 
 function validateName(name: string): string | undefined {
   if (!name.trim()) return "Name is required";
-  if (name.trim().length < 2) return "Name must be at least 2 characters";
+  if (name.trim().length < MIN_NAME_LENGTH)
+    return `Name must be at least ${MIN_NAME_LENGTH} characters`;
   return undefined;
 }
 
@@ -71,47 +78,99 @@ const initialFormData: BookingFormData = {
   timeOfDay: "",
 };
 
+async function fetchBookings(): Promise<{ bookings: TakenBooking[] }> {
+  const res = await fetch("/api/bookings");
+  if (!res.ok) throw new Error("Failed to fetch bookings");
+  return res.json();
+}
+
+async function fetchPricing(): Promise<{
+  pricing: {
+    vehicleType: string;
+    interiorPrice: number;
+    exteriorPrice: number;
+    bothPrice: number;
+  }[];
+}> {
+  const res = await fetch("/api/pricing");
+  if (!res.ok) throw new Error("Failed to fetch pricing");
+  return res.json();
+}
+
+async function createBooking(data: {
+  name: string;
+  mobile: string;
+  address: string;
+  returningCustomer: boolean;
+  vehicleYear: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  serviceType: string;
+  scent: string;
+  specialRequests: string | null;
+  date: string;
+  timeOfDay: string;
+}) {
+  const res = await fetch("/api/bookings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || "Failed to create booking");
+  }
+  return res.json();
+}
+
 export default function Home() {
+  const { data: session } = useSession();
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState<BookingFormData>(initialFormData);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitted, setSubmitted] = useState(false);
   const [bookingComplete, setBookingComplete] = useState(false);
-  const [takenBookings, setTakenBookings] = useState<TakenBooking[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pricing, setPricing] = useState<
-    {
-      vehicleType: string;
-      interiorPrice: number;
-      exteriorPrice: number;
-      bothPrice: number;
-    }[]
-  >([]);
 
-  // Fetch taken bookings and pricing on mount
+  // Register dev console when logged in
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const [bookingsRes, pricingRes] = await Promise.all([
-          fetch("/api/bookings"),
-          fetch("/api/pricing"),
-        ]);
+    if (!session) return;
 
-        if (bookingsRes.ok) {
-          const data = await bookingsRes.json();
-          setTakenBookings(data.bookings);
-        }
+    const cleanup = registerDevConsole({
+      formData,
+      setFormData,
+      currentStep,
+      setCurrentStep,
+      setTouched,
+      setSubmitted,
+      setBookingComplete,
+      initialFormData,
+    });
 
-        if (pricingRes.ok) {
-          const data = await pricingRes.json();
-          setPricing(data.pricing);
-        }
-      } catch (error) {
-        console.error("Failed to fetch data:", error);
-      }
-    }
-    fetchData();
-  }, []);
+    return cleanup;
+  }, [session, formData, currentStep]);
+
+  const { data: bookingsData } = useQuery({
+    queryKey: ["bookings"],
+    queryFn: fetchBookings,
+  });
+
+  const { data: pricingData } = useQuery({
+    queryKey: ["pricing"],
+    queryFn: fetchPricing,
+  });
+
+  const bookingMutation = useMutation({
+    mutationFn: createBooking,
+    onSuccess: () => {
+      setBookingComplete(true);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const takenBookings = bookingsData?.bookings ?? [];
+  const pricing = pricingData?.pricing ?? [];
 
   // Compute errors from form data
   const errors = useMemo(() => {
@@ -202,40 +261,20 @@ export default function Home() {
       return;
     }
 
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch("/api/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: formData.name,
-          mobile: formData.mobile,
-          address: formData.address,
-          returningCustomer: formData.returningCustomer,
-          vehicleYear: formData.vehicleYear,
-          vehicleMake: formData.vehicleMake,
-          vehicleModel: formData.vehicleModel,
-          serviceType: formData.serviceType,
-          scent: formData.scent,
-          specialRequests: formData.specialRequests || null,
-          date: formatDateBrisbane(formData.date!),
-          timeOfDay: formData.timeOfDay,
-        }),
-      });
-
-      if (response.ok) {
-        setBookingComplete(true);
-      } else {
-        const data = await response.json();
-        alert(data.error || "Failed to create booking");
-      }
-    } catch (error) {
-      console.error("Booking error:", error);
-      alert("Failed to create booking. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
+    bookingMutation.mutate({
+      name: formData.name,
+      mobile: formData.mobile,
+      address: formData.address,
+      returningCustomer: formData.returningCustomer,
+      vehicleYear: formData.vehicleYear,
+      vehicleMake: formData.vehicleMake,
+      vehicleModel: formData.vehicleModel,
+      serviceType: formData.serviceType,
+      scent: formData.scent,
+      specialRequests: formData.specialRequests || null,
+      date: formatDateBrisbane(formData.date!),
+      timeOfDay: formData.timeOfDay,
+    });
   };
 
   const stepProps = {
@@ -250,14 +289,9 @@ export default function Home() {
 
   if (bookingComplete) {
     return (
-      <main className="min-h-screen bg-linear-to-b from-background to-muted/20 py-8 px-4">
+      <main className="min-h-screen bg-background py-8 px-4">
         <div className="max-w-lg mx-auto">
           <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-2xl">
-                {process.env.NEXT_PUBLIC_BUSINESS_NAME}
-              </CardTitle>
-            </CardHeader>
             <CardContent className="text-center py-8">
               <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Booking Received!</h2>
@@ -272,29 +306,31 @@ export default function Home() {
                 })}{" "}
                 ({formData.timeOfDay}).
               </p>
-              <p className="text-muted-foreground mb-8">
+              <p className="text-muted-foreground">
                 You&apos;ll receive a confirmation shortly via text message.
               </p>
+            </CardContent>
+          </Card>
 
-              {/* Contact options */}
-              <div className="pt-6 border-t">
-                <p className="text-sm text-muted-foreground mb-3">
-                  Questions? Get in touch
-                </p>
-                <div className="flex gap-3">
-                  <Button variant="outline" className="flex-1" asChild>
-                    <a href={`tel:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
-                      <Phone className="w-4 h-4 mr-2" />
-                      Call
-                    </a>
-                  </Button>
-                  <Button variant="outline" className="flex-1" asChild>
-                    <a href={`sms:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
-                      <MessageSquare className="w-4 h-4 mr-2" />
-                      Text
-                    </a>
-                  </Button>
-                </div>
+          {/* Contact options */}
+          <Card className="mt-6">
+            <CardContent>
+              <p className="text-sm text-muted-foreground text-center mb-3">
+                Questions? Get in touch
+              </p>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" asChild>
+                  <a href={`tel:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
+                    <Phone className="w-4 h-4 mr-2" />
+                    Call
+                  </a>
+                </Button>
+                <Button variant="outline" className="flex-1" asChild>
+                  <a href={`sms:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
+                    <MessageSquare className="w-4 h-4 mr-2" />
+                    Text
+                  </a>
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -304,16 +340,16 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-linear-to-b from-background to-muted/20 py-8 px-4">
+    <main className="min-h-screen bg-background py-8 px-4">
       <div className="max-w-lg mx-auto">
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-xl">
-              {process.env.NEXT_PUBLIC_BUSINESS_NAME}
-            </CardTitle>
-            <CardDescription>
-              Book your car detailing appointment
-            </CardDescription>
+            <Image
+              src={logo}
+              alt={BUSINESS_NAME}
+              className="h-32 w-auto mx-auto"
+              priority
+            />
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit}>
@@ -352,43 +388,23 @@ export default function Home() {
                   <Button
                     type="submit"
                     className="flex-1"
-                    disabled={Object.keys(errors).length > 0 || isSubmitting}
+                    disabled={
+                      Object.keys(errors).length > 0 ||
+                      bookingMutation.isPending
+                    }
                   >
-                    {isSubmitting ? "Booking..." : "Book Appointment"}
+                    {bookingMutation.isPending
+                      ? "Booking..."
+                      : "Book Appointment"}
                   </Button>
                 )}
               </div>
             </form>
-
-            {/* Contact options */}
-            <div className="mt-6 pt-6 border-t">
-              <p className="text-sm text-muted-foreground text-center mb-3">
-                Need help or prefer to book by phone?
-              </p>
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" asChild>
-                  <a href={`tel:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
-                    <Phone className="w-4 h-4 mr-2" />
-                    Call
-                  </a>
-                </Button>
-                <Button variant="outline" className="flex-1" asChild>
-                  <a href={`sms:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
-                    <MessageSquare className="w-4 h-4 mr-2" />
-                    Text
-                  </a>
-                </Button>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
         {/* Pricing */}
         <Card className="mt-6">
-          {/* <CardHeader className="text-center">
-            <CardTitle className="text-xl">General Pricing</CardTitle>
-            <CardDescription>Starting prices by vehicle type</CardDescription>
-          </CardHeader> */}
           <CardContent>
             <Table>
               <TableHeader>
@@ -426,6 +442,29 @@ export default function Home() {
               Prices listed are starting prices, final pricing may vary based on
               vehicle size and condition
             </p>
+          </CardContent>
+        </Card>
+
+        {/* Contact options */}
+        <Card className="mt-6">
+          <CardContent>
+            <p className="text-sm text-muted-foreground text-center mb-3">
+              Need help or prefer to book by phone?
+            </p>
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" asChild>
+                <a href={`tel:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
+                  <Phone className="w-4 h-4 mr-2" />
+                  Call
+                </a>
+              </Button>
+              <Button variant="outline" className="flex-1" asChild>
+                <a href={`sms:${process.env.NEXT_PUBLIC_CONTACT_NUMBER}`}>
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Text
+                </a>
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

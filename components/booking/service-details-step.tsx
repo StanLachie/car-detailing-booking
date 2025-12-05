@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,9 +23,11 @@ export function ServiceDetailsStep({
   handleBlur,
 }: StepProps) {
   const [scents, setScents] = useState<Scent[]>([]);
+  const [scentsLoading, setScentsLoading] = useState(true);
 
   useEffect(() => {
     async function fetchScents() {
+      setScentsLoading(true);
       try {
         const response = await fetch("/api/scents");
         if (response.ok) {
@@ -33,6 +36,8 @@ export function ServiceDetailsStep({
         }
       } catch (error) {
         console.error("Failed to fetch scents:", error);
+      } finally {
+        setScentsLoading(false);
       }
     }
     fetchScents();
@@ -99,11 +104,17 @@ export function ServiceDetailsStep({
             {formData.serviceType === "both" && (
               <SelectItem value="no-preference">No Preference</SelectItem>
             )}
-            {scents.map((s) => (
-              <SelectItem key={s.id} value={s.name.toLowerCase()}>
-                {s.name}
-              </SelectItem>
-            ))}
+            {scentsLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </div>
+            ) : (
+              scents.map((s) => (
+                <SelectItem key={s.id} value={s.name.toLowerCase()}>
+                  {s.name}
+                </SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
         {showError("scent") && (

@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { toast } from "sonner";
-import { formatDateBrisbane, formatDateDisplay, isDateWithin24Hours, isWithin24Hours } from "@/lib/date";
+import {
+  formatDateBrisbane,
+  formatDateDisplay,
+  isDateWithin24Hours,
+  isWithin24Hours,
+} from "@/lib/date";
 import {
   Card,
   CardContent,
@@ -23,78 +29,148 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
 import {
-  CheckCircle,
   XCircle,
   RefreshCw,
   ChevronDown,
   Loader2,
   CalendarOff,
-  Phone,
-  MessageSquare,
-  MapPin,
-  Car,
   Plus,
   Sparkles,
   Eye,
   EyeOff,
   Trash2,
 } from "lucide-react";
+import {
+  JobCard,
+  type Booking,
+  type Scent,
+  type UnavailableSlot,
+  type TakenBooking,
+} from "@/components/dashboard";
 
-interface Booking {
+// API fetch functions
+async function fetchBookings(): Promise<{
+  upcoming: Booking[];
+  past: Booking[];
+}> {
+  const res = await fetch("/api/admin/bookings");
+  if (!res.ok) throw new Error("Failed to fetch bookings");
+  return res.json();
+}
+
+async function fetchUnavailable(): Promise<{ slots: UnavailableSlot[] }> {
+  const res = await fetch("/api/admin/unavailable");
+  if (!res.ok) throw new Error("Failed to fetch unavailable slots");
+  return res.json();
+}
+
+async function fetchTakenBookings(): Promise<{ bookings: TakenBooking[] }> {
+  const res = await fetch("/api/bookings");
+  if (!res.ok) throw new Error("Failed to fetch taken bookings");
+  return res.json();
+}
+
+async function fetchScents(): Promise<{ scents: Scent[] }> {
+  const res = await fetch("/api/admin/scents");
+  if (!res.ok) throw new Error("Failed to fetch scents");
+  return res.json();
+}
+
+// API mutation functions
+async function updateBookingStatusApi(data: {
   id: string;
-  name: string;
-  mobile: string;
-  address: string;
-  returningCustomer: boolean;
-  vehicleYear: string;
-  vehicleMake: string;
-  vehicleModel: string;
-  serviceType: string;
-  scent: string;
-  specialRequests: string | null;
-  date: string;
-  timeOfDay: string;
   status: string;
-  createdAt: number;
+  date?: string;
+  timeOfDay?: string;
+}) {
+  const res = await fetch("/api/admin/bookings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update booking");
+  return res.json();
 }
 
-interface Scent {
-  id: string;
-  name: string;
-  enabled: boolean;
+async function addUnavailableSlotsApi(
+  slots: { date: string; timeOfDay: string }[]
+) {
+  const res = await fetch("/api/admin/unavailable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slots }),
+  });
+  if (!res.ok) throw new Error("Failed to block dates");
+  return res.json();
 }
 
-interface UnavailableSlot {
+async function removeUnavailableSlotApi(data: {
   date: string;
   timeOfDay: string;
+}) {
+  const res = await fetch("/api/admin/unavailable", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slots: [data] }),
+  });
+  if (!res.ok) throw new Error("Failed to unblock date");
+  return res.json();
 }
 
-interface TakenBooking {
-  date: string;
-  timeframe: string;
+async function addScentApi(name: string) {
+  const res = await fetch("/api/admin/scents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || "Failed to add scent");
+  }
+  return res.json();
+}
+
+async function toggleScentApi(data: { id: string; enabled: boolean }) {
+  const res = await fetch("/api/admin/scents", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update scent");
+  return res.json();
+}
+
+async function deleteScentApi(id: string) {
+  const res = await fetch("/api/admin/scents", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Failed to delete scent");
+  return res.json();
 }
 
 export default function Dashboard() {
   const { data: session, isPending } = useSession();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  const [upcoming, setUpcoming] = useState<Booking[]>([]);
-  const [past, setPast] = useState<Booking[]>([]);
-  const [unavailable, setUnavailable] = useState<UnavailableSlot[]>([]);
+  // UI state
   const [upcomingLimit, setUpcomingLimit] = useState(3);
   const [pastLimit, setPastLimit] = useState(3);
-  const [loading, setLoading] = useState(true);
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
-  const [selectedTimeframe, setSelectedTimeframe] = useState<"morning" | "afternoon" | "all">("all");
-  const [takenBookings, setTakenBookings] = useState<TakenBooking[]>([]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState<
+    "morning" | "afternoon" | "all"
+  >("all");
 
   // Rebook dialog state
   const [rebookJob, setRebookJob] = useState<Booking | null>(null);
   const [rebookDate, setRebookDate] = useState<Date | undefined>();
-  const [rebookTime, setRebookTime] = useState<"morning" | "afternoon" | "">("");
+  const [rebookTime, setRebookTime] = useState<"morning" | "afternoon" | "">(
+    ""
+  );
 
   // Scent management state
-  const [scents, setScents] = useState<Scent[]>([]);
   const [newScentName, setNewScentName] = useState("");
 
   useEffect(() => {
@@ -103,122 +179,171 @@ export default function Dashboard() {
     }
   }, [session, isPending, router]);
 
+  // Queries
+  const {
+    data: bookingsData,
+    isLoading: bookingsLoading,
+    isFetching: bookingsFetching,
+  } = useQuery({
+    queryKey: ["admin-bookings"],
+    queryFn: fetchBookings,
+    enabled: !!session,
+  });
+
+  const {
+    data: unavailableData,
+    isLoading: unavailableLoading,
+    isFetching: unavailableFetching,
+  } = useQuery({
+    queryKey: ["admin-unavailable"],
+    queryFn: fetchUnavailable,
+    enabled: !!session,
+  });
+
+  const {
+    data: takenData,
+    isLoading: takenLoading,
+    isFetching: takenFetching,
+  } = useQuery({
+    queryKey: ["bookings"],
+    queryFn: fetchTakenBookings,
+    enabled: !!session,
+  });
+
+  const {
+    data: scentsData,
+    isLoading: scentsLoading,
+    isFetching: scentsFetching,
+  } = useQuery({
+    queryKey: ["admin-scents"],
+    queryFn: fetchScents,
+    enabled: !!session,
+  });
+
+  const upcoming = bookingsData?.upcoming ?? [];
+  const past = bookingsData?.past ?? [];
+  const unavailable = unavailableData?.slots ?? [];
+  const takenBookings = takenData?.bookings ?? [];
+  const scents = scentsData?.scents ?? [];
+  const loading =
+    bookingsLoading || unavailableLoading || takenLoading || scentsLoading;
+  const refetching =
+    bookingsFetching || unavailableFetching || takenFetching || scentsFetching;
+
+  // Track manual refresh to show toast on completion
+  const manualRefreshRef = useRef(false);
+  const prevRefetchingRef = useRef(refetching);
+
   useEffect(() => {
-    if (session) {
-      fetchData();
+    if (prevRefetchingRef.current && !refetching && manualRefreshRef.current) {
+      toast.success("Data refreshed");
+      manualRefreshRef.current = false;
     }
-  }, [session]);
+    prevRefetchingRef.current = refetching;
+  }, [refetching]);
 
-  async function fetchData() {
-    setLoading(true);
-    try {
-      const [bookingsRes, unavailableRes, takenRes, scentsRes] = await Promise.all([
-        fetch("/api/admin/bookings"),
-        fetch("/api/admin/unavailable"),
-        fetch("/api/bookings"),
-        fetch("/api/admin/scents"),
-      ]);
+  // Invalidate all dashboard queries
+  const invalidateAll = () => {
+    manualRefreshRef.current = true;
+    queryClient.invalidateQueries({ queryKey: ["admin-bookings"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-unavailable"] });
+    queryClient.invalidateQueries({ queryKey: ["bookings"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-scents"] });
+  };
 
-      if (bookingsRes.ok) {
-        const data = await bookingsRes.json();
-        setUpcoming(data.upcoming);
-        setPast(data.past);
-      }
-
-      if (scentsRes.ok) {
-        const data = await scentsRes.json();
-        setScents(data.scents);
-      }
-
-      if (unavailableRes.ok) {
-        const data = await unavailableRes.json();
-        setUnavailable(data.slots);
-      }
-
-      if (takenRes.ok) {
-        const data = await takenRes.json();
-        setTakenBookings(data.bookings);
-      }
-    } catch (error) {
-      console.error("Failed to fetch data:", error);
-      toast.error("Failed to load data");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function updateBookingStatus(id: string, status: string) {
-    const statusMessages: Record<string, string> = {
-      completed: "Job marked as completed",
-      cancelled: "Job cancelled",
-      pending: "Job rebooked",
-    };
-
-    try {
-      const res = await fetch("/api/admin/bookings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status }),
-      });
-
-      if (res.ok) {
-        toast.success(statusMessages[status] || "Status updated");
-        fetchData();
-      } else {
-        toast.error("Failed to update status");
-      }
-    } catch (error) {
-      console.error("Failed to update booking:", error);
+  // Mutations
+  const updateStatusMutation = useMutation({
+    mutationFn: updateBookingStatusApi,
+    onSuccess: (_, variables) => {
+      const statusMessages: Record<string, string> = {
+        completed: "Job marked as completed",
+        cancelled: "Job cancelled",
+        pending: "Job rebooked",
+      };
+      toast.success(statusMessages[variables.status] || "Status updated");
+      invalidateAll();
+    },
+    onError: () => {
       toast.error("Failed to update status");
-    }
+    },
+  });
+
+  const addUnavailableMutation = useMutation({
+    mutationFn: addUnavailableSlotsApi,
+    onSuccess: () => {
+      toast.success(
+        `Blocked ${selectedDates.length} date${
+          selectedDates.length !== 1 ? "s" : ""
+        }`
+      );
+      setSelectedDates([]);
+      invalidateAll();
+    },
+    onError: () => {
+      toast.error("Failed to block dates");
+    },
+  });
+
+  const removeUnavailableMutation = useMutation({
+    mutationFn: removeUnavailableSlotApi,
+    onSuccess: () => {
+      toast.success("Date unblocked");
+      invalidateAll();
+    },
+    onError: () => {
+      toast.error("Failed to unblock date");
+    },
+  });
+
+  const addScentMutation = useMutation({
+    mutationFn: addScentApi,
+    onSuccess: () => {
+      toast.success("Scent added");
+      setNewScentName("");
+      invalidateAll();
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const toggleScentMutation = useMutation({
+    mutationFn: toggleScentApi,
+    onSuccess: (_, variables) => {
+      toast.success(variables.enabled ? "Scent enabled" : "Scent disabled");
+      invalidateAll();
+    },
+    onError: () => {
+      toast.error("Failed to update scent");
+    },
+  });
+
+  const deleteScentMutation = useMutation({
+    mutationFn: deleteScentApi,
+    onSuccess: () => {
+      toast.success("Scent deleted");
+      invalidateAll();
+    },
+    onError: () => {
+      toast.error("Failed to delete scent");
+    },
+  });
+
+  function updateBookingStatus(id: string, status: string) {
+    updateStatusMutation.mutate({ id, status });
   }
 
-  async function addUnavailableSlots() {
+  function addUnavailableSlots() {
     if (selectedDates.length === 0) return;
-
     const slots = selectedDates.map((date) => ({
       date: formatDateBrisbane(date),
       timeOfDay: selectedTimeframe,
     }));
-
-    try {
-      const res = await fetch("/api/admin/unavailable", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slots }),
-      });
-
-      if (res.ok) {
-        toast.success(`Blocked ${selectedDates.length} date${selectedDates.length !== 1 ? "s" : ""}`);
-        setSelectedDates([]);
-        fetchData();
-      } else {
-        toast.error("Failed to block dates");
-      }
-    } catch (error) {
-      console.error("Failed to add unavailable slots:", error);
-      toast.error("Failed to block dates");
-    }
+    addUnavailableMutation.mutate(slots);
   }
 
-  async function removeUnavailableSlot(date: string, timeOfDay: string) {
-    try {
-      const res = await fetch("/api/admin/unavailable", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slots: [{ date, timeOfDay }] }),
-      });
-
-      if (res.ok) {
-        toast.success("Date unblocked");
-        fetchData();
-      } else {
-        toast.error("Failed to unblock date");
-      }
-    } catch (error) {
-      console.error("Failed to remove unavailable slot:", error);
-      toast.error("Failed to unblock date");
-    }
+  function removeUnavailableSlot(date: string, timeOfDay: string) {
+    removeUnavailableMutation.mutate({ date, timeOfDay });
   }
 
   const formatDate = formatDateDisplay;
@@ -236,7 +361,10 @@ export default function Dashboard() {
     return morningTaken && afternoonTaken;
   };
 
-  const isTimeSlotTaken = (checkDate: Date, timeframe: "morning" | "afternoon") => {
+  const isTimeSlotTaken = (
+    checkDate: Date,
+    timeframe: "morning" | "afternoon"
+  ) => {
     if (isWithin24Hours(checkDate, timeframe)) return true;
     const dateStr = formatDateBrisbane(checkDate);
     return takenBookings.some(
@@ -277,97 +405,36 @@ export default function Dashboard() {
     setRebookTime("");
   }
 
-  async function handleRebook() {
+  function handleRebook() {
     if (!rebookJob || !rebookDate || !rebookTime) return;
-
-    try {
-      const res = await fetch("/api/admin/bookings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: rebookJob.id,
-          status: "pending",
-          date: formatDateBrisbane(rebookDate),
-          timeOfDay: rebookTime,
-        }),
-      });
-
-      if (res.ok) {
-        toast.success("Job rebooked successfully");
-        closeRebookDialog();
-        fetchData();
-      } else {
-        toast.error("Failed to rebook job");
+    updateStatusMutation.mutate(
+      {
+        id: rebookJob.id,
+        status: "pending",
+        date: formatDateBrisbane(rebookDate),
+        timeOfDay: rebookTime,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Job rebooked successfully");
+          closeRebookDialog();
+        },
       }
-    } catch (error) {
-      console.error("Failed to rebook:", error);
-      toast.error("Failed to rebook job");
-    }
+    );
   }
 
   // Scent management functions
-  async function addScent() {
+  function addScent() {
     if (!newScentName.trim()) return;
-
-    try {
-      const res = await fetch("/api/admin/scents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newScentName.trim() }),
-      });
-
-      if (res.ok) {
-        toast.success("Scent added");
-        setNewScentName("");
-        fetchData();
-      } else {
-        const data = await res.json();
-        toast.error(data.error || "Failed to add scent");
-      }
-    } catch (error) {
-      console.error("Failed to add scent:", error);
-      toast.error("Failed to add scent");
-    }
+    addScentMutation.mutate(newScentName.trim());
   }
 
-  async function toggleScent(id: string, enabled: boolean) {
-    try {
-      const res = await fetch("/api/admin/scents", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, enabled }),
-      });
-
-      if (res.ok) {
-        toast.success(enabled ? "Scent enabled" : "Scent disabled");
-        fetchData();
-      } else {
-        toast.error("Failed to update scent");
-      }
-    } catch (error) {
-      console.error("Failed to toggle scent:", error);
-      toast.error("Failed to update scent");
-    }
+  function toggleScent(id: string, enabled: boolean) {
+    toggleScentMutation.mutate({ id, enabled });
   }
 
-  async function deleteScent(id: string) {
-    try {
-      const res = await fetch("/api/admin/scents", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-
-      if (res.ok) {
-        toast.success("Scent deleted");
-        fetchData();
-      } else {
-        toast.error("Failed to delete scent");
-      }
-    } catch (error) {
-      console.error("Failed to delete scent:", error);
-      toast.error("Failed to delete scent");
-    }
+  function deleteScent(id: string) {
+    deleteScentMutation.mutate(id);
   }
 
   if (isPending || loading) {
@@ -383,13 +450,15 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="min-h-screen bg-linear-to-b from-background to-muted/20 py-8 px-4">
+    <main className="min-h-screen bg-background py-8 px-4">
       <div className="max-w-4xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          <Button variant="outline" onClick={fetchData}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+          <Button variant="outline" onClick={invalidateAll} disabled={refetching}>
+            <RefreshCw
+              className={`w-4 h-4 mr-2 ${refetching ? "animate-spin" : ""}`}
+            />
+            {refetching ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
 
@@ -415,6 +484,11 @@ export default function Dashboard() {
                     onStatusChange={updateBookingStatus}
                     onRebook={openRebookDialog}
                     formatDate={formatDate}
+                    pendingStatus={
+                      updateStatusMutation.isPending
+                        ? (updateStatusMutation.variables as { id: string; status: string })
+                        : null
+                    }
                   />
                 ))}
                 {upcoming.length > upcomingLimit && (
@@ -455,6 +529,11 @@ export default function Dashboard() {
                     onRebook={openRebookDialog}
                     formatDate={formatDate}
                     isPast
+                    pendingStatus={
+                      updateStatusMutation.isPending
+                        ? (updateStatusMutation.variables as { id: string; status: string })
+                        : null
+                    }
                   />
                 ))}
                 {past.length > pastLimit && (
@@ -483,8 +562,10 @@ export default function Dashboard() {
           <CardContent className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
               <div className="flex-1">
-                <p className="text-sm font-medium mb-2">Select dates to block</p>
-                <div className="border rounded-md p-2">
+                <p className="text-sm font-medium mb-2">
+                  Select dates to block
+                </p>
+                <div className="border border-border rounded-md p-2">
                   <Calendar
                     mode="multiple"
                     selected={selectedDates}
@@ -506,7 +587,9 @@ export default function Dashboard() {
                     {(["morning", "afternoon", "all"] as const).map((tf) => (
                       <Button
                         key={tf}
-                        variant={selectedTimeframe === tf ? "default" : "outline"}
+                        variant={
+                          selectedTimeframe === tf ? "default" : "outline"
+                        }
                         size="sm"
                         onClick={() => setSelectedTimeframe(tf)}
                         className="flex-1 capitalize"
@@ -518,16 +601,23 @@ export default function Dashboard() {
                 </div>
                 <Button
                   onClick={addUnavailableSlots}
-                  disabled={selectedDates.length === 0}
+                  disabled={
+                    selectedDates.length === 0 ||
+                    addUnavailableMutation.isPending
+                  }
                   className="w-full"
                 >
                   <CalendarOff className="w-4 h-4 mr-2" />
-                  Block {selectedDates.length} date{selectedDates.length !== 1 ? "s" : ""}
+                  {addUnavailableMutation.isPending
+                    ? "Blocking..."
+                    : `Block ${selectedDates.length} date${selectedDates.length !== 1 ? "s" : ""}`}
                 </Button>
 
                 {unavailable.length > 0 && (
                   <div>
-                    <p className="text-sm font-medium mb-2">Currently blocked</p>
+                    <p className="text-sm font-medium mb-2">
+                      Currently blocked
+                    </p>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                       {unavailable.map((slot, i) => (
                         <div
@@ -536,12 +626,16 @@ export default function Dashboard() {
                         >
                           <span>
                             {formatDate(slot.date)} -{" "}
-                            {slot.timeOfDay === "all" ? "Full Day" : slot.timeOfDay}
+                            {slot.timeOfDay === "all"
+                              ? "Full Day"
+                              : slot.timeOfDay}
                           </span>
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => removeUnavailableSlot(slot.date, slot.timeOfDay)}
+                            onClick={() =>
+                              removeUnavailableSlot(slot.date, slot.timeOfDay)
+                            }
                           >
                             <XCircle className="w-4 h-4" />
                           </Button>
@@ -574,9 +668,12 @@ export default function Dashboard() {
                 onChange={(e) => setNewScentName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addScent()}
               />
-              <Button onClick={addScent} disabled={!newScentName.trim()}>
+              <Button
+                onClick={addScent}
+                disabled={!newScentName.trim() || addScentMutation.isPending}
+              >
                 <Plus className="w-4 h-4 mr-1" />
-                Add
+                {addScentMutation.isPending ? "Adding..." : "Add"}
               </Button>
             </div>
 
@@ -587,7 +684,11 @@ export default function Dashboard() {
                     key={s.id}
                     className="flex items-center justify-between bg-muted rounded-md px-3 py-2"
                   >
-                    <span className={s.enabled ? "" : "text-muted-foreground line-through"}>
+                    <span
+                      className={
+                        s.enabled ? "" : "text-muted-foreground line-through"
+                      }
+                    >
                       {s.name}
                     </span>
                     <div className="flex gap-1">
@@ -596,18 +697,38 @@ export default function Dashboard() {
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => toggleScent(s.id, true)}
-                        disabled={s.enabled}
+                        disabled={
+                          s.enabled ||
+                          (toggleScentMutation.isPending &&
+                            toggleScentMutation.variables?.id === s.id)
+                        }
                       >
-                        <Eye className="w-4 h-4" />
+                        {toggleScentMutation.isPending &&
+                        toggleScentMutation.variables?.id === s.id &&
+                        toggleScentMutation.variables?.enabled === true ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
                       </Button>
                       <Button
                         variant={!s.enabled ? "default" : "outline"}
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => toggleScent(s.id, false)}
-                        disabled={!s.enabled}
+                        disabled={
+                          !s.enabled ||
+                          (toggleScentMutation.isPending &&
+                            toggleScentMutation.variables?.id === s.id)
+                        }
                       >
-                        <EyeOff className="w-4 h-4" />
+                        {toggleScentMutation.isPending &&
+                        toggleScentMutation.variables?.id === s.id &&
+                        toggleScentMutation.variables?.enabled === false ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <EyeOff className="w-4 h-4" />
+                        )}
                       </Button>
                       <Button
                         variant="ghost"
@@ -631,7 +752,10 @@ export default function Dashboard() {
       </div>
 
       {/* Rebook Dialog */}
-      <Dialog open={!!rebookJob} onOpenChange={(open) => !open && closeRebookDialog()}>
+      <Dialog
+        open={!!rebookJob}
+        onOpenChange={(open) => !open && closeRebookDialog()}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Rebook Job</DialogTitle>
@@ -642,7 +766,7 @@ export default function Dashboard() {
           <div className="space-y-4">
             <div>
               <p className="text-sm font-medium mb-2">Select Date</p>
-              <div className="border rounded-md p-2">
+              <div className="border border-border rounded-md p-2">
                 <Calendar
                   mode="single"
                   selected={rebookDate}
@@ -690,141 +814,28 @@ export default function Dashboard() {
             )}
 
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={closeRebookDialog} className="flex-1">
+              <Button
+                variant="outline"
+                onClick={closeRebookDialog}
+                className="flex-1"
+              >
                 Cancel
               </Button>
               <Button
                 onClick={handleRebook}
-                disabled={!rebookDate || !rebookTime}
+                disabled={
+                  !rebookDate || !rebookTime || updateStatusMutation.isPending
+                }
                 className="flex-1"
               >
-                Confirm Rebook
+                {updateStatusMutation.isPending
+                  ? "Rebooking..."
+                  : "Confirm Rebook"}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
     </main>
-  );
-}
-
-function JobCard({
-  job,
-  onStatusChange,
-  onRebook,
-  formatDate,
-  isPast = false,
-}: {
-  job: Booking;
-  onStatusChange: (id: string, status: string) => void;
-  onRebook?: (job: Booking) => void;
-  formatDate: (date: string) => string;
-  isPast?: boolean;
-}) {
-  const statusColors: Record<string, string> = {
-    pending: "bg-yellow-100 text-yellow-800",
-    confirmed: "bg-blue-100 text-blue-800",
-    completed: "bg-green-100 text-green-800",
-    cancelled: "bg-red-100 text-red-800",
-  };
-
-  return (
-    <div className="border rounded-lg p-4 space-y-3">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold">{job.name}</h3>
-            {job.returningCustomer && (
-              <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">
-                Returning
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {formatDate(job.date)} - {job.timeOfDay}
-          </p>
-        </div>
-        <span
-          className={`text-xs px-2 py-1 rounded-full capitalize ${statusColors[job.status]}`}
-        >
-          {job.status}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Car className="w-4 h-4" />
-          {job.vehicleYear} {job.vehicleMake} {job.vehicleModel}
-        </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Sparkles className="w-4 h-4" />
-          <span className="capitalize">{job.serviceType}</span>
-          {job.scent !== "none" && ` · ${job.scent}`}
-        </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Phone className="w-4 h-4" />
-          {job.mobile}
-        </div>
-        <a
-          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <MapPin className="w-4 h-4 shrink-0" />
-          <span className="truncate underline">{job.address}</span>
-        </a>
-      </div>
-
-      {job.specialRequests && (
-        <p className="text-sm bg-muted p-2 rounded">
-          <span className="font-medium">Notes:</span> {job.specialRequests}
-        </p>
-      )}
-
-      <div className="flex flex-wrap gap-2 pt-2">
-        {job.status === "pending" && (
-          <>
-            <Button
-              size="sm"
-              onClick={() => onStatusChange(job.id, "completed")}
-            >
-              <CheckCircle className="w-4 h-4 mr-1" />
-              Complete
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => onStatusChange(job.id, "cancelled")}
-            >
-              <XCircle className="w-4 h-4 mr-1" />
-              Cancel
-            </Button>
-          </>
-        )}
-        {job.status === "cancelled" && onRebook && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onRebook(job)}
-          >
-            <RefreshCw className="w-4 h-4 mr-1" />
-            Rebook
-          </Button>
-        )}
-        <Button size="sm" variant="outline" asChild>
-          <a href={`tel:${job.mobile}`}>
-            <Phone className="w-4 h-4 mr-1" />
-            Call
-          </a>
-        </Button>
-        <Button size="sm" variant="outline" asChild>
-          <a href={`sms:${job.mobile}`}>
-            <MessageSquare className="w-4 h-4 mr-1" />
-            Text
-          </a>
-        </Button>
-      </div>
-    </div>
   );
 }

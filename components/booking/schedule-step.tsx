@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { formatDateBrisbane, isDateWithin24Hours, isWithin24Hours } from "@/lib/date";
+import { MAX_BOOKING_DAYS_AHEAD } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,10 @@ export function ScheduleStep({
 }: ScheduleStepProps) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  const maxDate = new Date();
+  maxDate.setDate(maxDate.getDate() + MAX_BOOKING_DAYS_AHEAD);
+  maxDate.setHours(23, 59, 59, 999);
 
   const isDateFullyBooked = (checkDate: Date) => {
     // Check if within 24 hours first
@@ -56,7 +61,7 @@ export function ScheduleStep({
         <Label>Select Date *</Label>
         <div
           className={cn(
-            "border rounded-md p-2",
+            "border border-border rounded-md p-2",
             showError("date") && "border-destructive"
           )}
         >
@@ -72,7 +77,7 @@ export function ScheduleStep({
               handleBlur("date");
             }}
             disabled={(checkDate) =>
-              checkDate <= today || isDateFullyBooked(checkDate)
+              checkDate <= today || checkDate > maxDate || isDateFullyBooked(checkDate)
             }
             className="w-full"
             classNames={{

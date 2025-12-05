@@ -20,6 +20,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { StepProps, AddressSuggestion } from "./types";
+import { DEBOUNCE_MS, ADDRESS_MIN_CHARS } from "@/lib/config";
 
 export function PersonalDetailsStep({
   formData,
@@ -32,40 +33,59 @@ export function PersonalDetailsStep({
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
   const [addressOpen, setAddressOpen] = useState(false);
   const [addressLoading, setAddressLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Debounced address search
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
-    if (addressQuery.length < 3) {
+    if (addressQuery.length < ADDRESS_MIN_CHARS) {
       setAddressSuggestions([]);
       setAddressLoading(false);
+      setHasSearched(false);
       return;
     }
 
     setAddressLoading(true);
 
     debounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       try {
         const response = await fetch(
-          `/api/address?q=${encodeURIComponent(addressQuery)}`
+          `/api/address?q=${encodeURIComponent(addressQuery)}`,
+          { signal: controller.signal }
         );
         const data = await response.json();
-        setAddressSuggestions(data.addresses ?? []);
+        if (!controller.signal.aborted) {
+          setAddressSuggestions(data.addresses ?? []);
+          setHasSearched(true);
+          setAddressLoading(false);
+        }
       } catch (error) {
-        console.error("Failed to fetch addresses:", error);
-        setAddressSuggestions([]);
-      } finally {
-        setAddressLoading(false);
+        if (error instanceof Error && error.name !== "AbortError") {
+          console.error("Failed to fetch addresses:", error);
+          setAddressSuggestions([]);
+          setHasSearched(true);
+          setAddressLoading(false);
+        }
       }
-    }, 300);
+    }, DEBOUNCE_MS);
 
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
     };
   }, [addressQuery]);
@@ -148,15 +168,17 @@ export function PersonalDetailsStep({
                   </div>
                 )}
                 {!addressLoading &&
-                  addressQuery.length >= 3 &&
+                  hasSearched &&
                   addressSuggestions.length === 0 && (
                     <CommandEmpty>No addresses found.</CommandEmpty>
                   )}
-                {!addressLoading && addressQuery.length < 3 && (
-                  <div className="py-6 text-center text-sm text-muted-foreground">
-                    Type at least 3 characters to search
-                  </div>
-                )}
+                {!addressLoading &&
+                  !hasSearched &&
+                  addressQuery.length < ADDRESS_MIN_CHARS && (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      Type at least {ADDRESS_MIN_CHARS} characters to search
+                    </div>
+                  )}
                 {!addressLoading && addressSuggestions.length > 0 && (
                   <CommandGroup>
                     {addressSuggestions.map((suggestion) => (
